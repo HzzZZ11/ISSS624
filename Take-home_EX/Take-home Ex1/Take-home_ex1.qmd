@@ -349,7 +349,7 @@ localMI_dw_FUN <- localmoran(nga_wp$`wpt functional`, wm73_lw)
 ```
 
 ```{r}
-head(localMI_dw_FUN)
+head(localMI_dw_FUN) 
 ```
 
 ```{r}
