@@ -18,6 +18,9 @@ website:
           - text: In-class Exercise 2
             href: In-class_EX/In-class Ex2/In-class_ex2.qmd
       - text: Take-home Exercises
+        menu: 
+          - text: Take-home Exercixe 1
+            href: Take-home_EX/Take-home Ex1/Take-home_ex1.qmd
     right:
       - href: index.qmd
         text: Home
