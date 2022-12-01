@@ -6,4 +6,4 @@ Welcome to ISSS624 Geospatial Analytics Applications!
 
 In this webpage, I am going to share with you my learning journey of geosaptial analytics.
 
-ZH
+ZHzh
