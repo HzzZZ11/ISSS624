@@ -1,0 +1,879 @@
+---
+title: "Take-home EX2"
+editor: visual
+execute: 
+  warning: false
+  message: false
+format: html
+---
+
+# Take-home Exercise 2: Regionalisation of Multivariate Water Point Attributes with Non-spatially Constrained and Spatially Constrained Clustering Methods
+
+## Setting the Scene
+
+The process of creating regions is called [regionalisation](https://www.researchgate.net/publication/28153673_Supervised_Regionalization_Methods_A_Survey/link/0fcfd5094046b13d35000000/download). A regionalisation is a special kind of clustering where the objective is to group observations which are similar in their statistical attributes, but also in their spatial location. In this sense, regionalization embeds the same logic as standard clustering techniques, but also applies a series of geographical constraints. Often, these constraints relate to connectivity: two candidates can only be grouped together in the same region if there exists a path from one member to another member that never leaves the region. These paths often model the spatial relationships in the data, such as contiguity or proximity. However, connectivity does not always need to hold for all regions, and in certain contexts it makes sense to relax connectivity or to impose different types of geographic constraints.
+
+## Objectives
+
+In this take-home exercise you are required to regionalise Nigeria by using, but not limited to the following measures:
+
+-   Total number of functional water points
+
+-   Total number of nonfunctional water points
+
+-   Percentage of functional water points
+
+-   Percentage of non-functional water points
+
+-   Percentage of main water point technology (i.e. Hand Pump)
+
+-   Percentage of usage capacity (i.e. \< 1000, \>=1000)
+
+-   Percentage of rural water points
+
+## The Data
+
+### Apstial data
+
+For the purpose of this assignment, data from [WPdx Global Data Repositories](https://www.waterpointdata.org/access-data/) will be used. There are two versions of the data. They are: WPdx-Basic and WPdx+. You are required to use WPdx+ data set.
+
+### Geospatial data
+
+Nigeria Level-2 Administrative Boundary (also known as Local Government Area) polygon features GIS data will be used in this take-home exercise. The data can be downloaded either from The [Humanitarian Data Exchange](https://data.humdata.org/) portal or [geoBoundaries](https://www.geoboundaries.org/).
+
+## The Task
+
+The specific tasks of this take-home exercise are as follows:
+
+-   Using appropriate sf method, import the shapefile into R and save it in a simple feature data frame format. Note that there are three Projected Coordinate Systems of Nigeria, they are: EPSG: 26391, 26392, and 26303. You can use any one of them.
+
+-   Using appropriate tidyr and dplyr methods, derive the proportion of functional and non-functional water point at LGA level (i.e. ADM2).
+
+-   Combining the geospatial and aspatial data frame into simple feature data frame.
+
+-   Delineating water point measures functional regions by using conventional hierarchical clustering.
+
+-   Delineating water point measures functional regions by using spatially constrained clustering algorithms.
+
+### Thematic Mapping
+
+-   Plot to show the water points measures derived by using appropriate statistical graphics and choropleth mapping technique.
+
+### Analytical Mapping
+
+-   Plot functional regions delineated by using both non-spatially constrained and spatially constrained clustering algorithms.
+
+### **Glimpse of Steps**
+
+Some of the important steps performed in this study are as follows
+
+-   Importing shapefile into R using sf package.
+
+-   Deriving the proportion of functional and non-functional water point at LGA level using appropriate tidyr and dplyr methods.
+
+-   Combining the geospatial and aspatial data frame into simple feature data frame.
+
+-   Delineating water point measures functional regions by using conventional hierarchical clustering.
+
+-   Delineating water point measures functional regions by using spatially constrained clustering algorithms.
+
+-   Thematic Mapping - Plotting maps to show the water points measures derived by using appropriate statistical graphics and choropleth mapping technique.
+
+-   Analytical Mapping - Plotting functional regions delineated by using both non-spatially constrained and spatially constrained clustering algorithms.
+
+#### **Loading packages**
+
+Let us first load required packages into R environment. [`p_load`](https://cran.r-project.org/web/packages/pacman/pacman.pdf) function pf [**pacman**](https://github.com/trinker/pacman) package is used to install the following packages into R environment.
+
+-   **sf**, **rgdal** and **spdep -** Spatial data handling
+
+-   **tidyverse**, especially **readr**, **ggplot2** and **dplyr -** Attribute data handling
+
+-   **tmap -** Choropleth mapping
+
+-   **coorplot**, **ggpubr**, and **heatmaply -** Multivariate data visualisation and analysis
+
+-   **cluster, ClustGeo -** Cluster analysis
+
+-   **patchwork, ggthemes** - Effective visualisation and layouts
+
+```{r}
+pacman::p_load(sf, tidyverse, tmap, tidyverse, corrplot, funModeling, corrplot, psych, ggpubr, cluster, factoextra, heatmaply, spdep, ClustGeo, rgdal, NbClust, GGally, patchwork, ggthemes, knitr)
+```
+
+#### 
+
+#### **Importing Spatial Data**
+
+Import spatial data. Since water point data set is in csv file format, we will use read_csv() of readr package to import WPdx.csv as shown the code chunk below. The output R object is called listings and it is a tibble data frame.
+
+-   `filter()` of dplyr package is used to extract water point records of Nigeria.
+
+```{r}
+
+wp_nga <- read_csv("data/WPdx.csv") %>%
+  filter(`#clean_country_name` == "Nigeria")
+```
+
+`st_as_sfc()` of sf package is used to derive a new field called Geometry as shown in the code chunk below
+
+```{r}
+
+wp_nga$Geometry = st_as_sfc(wp_nga$`New Georeferenced Column`)
+```
+
+convert the tibble data frame into sf data frame.
+
+```{r}
+
+wp_sf <- st_sf(wp_nga, crs=4326) 
+```
+
+### **Importing Geospatial Data**
+
+Now let us import geospatial data. The code chunk below uses *st_read()* function of **sf** package to import *geoBoundaries-NGA-ADM2* shapefile into R environment.
+
+Two arguments are used :
+
+-   *dsn* - destination : to define the data path
+
+-   *layer* - to provide the shapefile name
+
+-   *crs* - coordinate reference system in epsg format. EPSG: 4326 is wgs84 Geographic Coordinate System
+
+    ```{r}
+    nga <- st_read(dsn = "data",
+                   layer = "geoBoundaries-NGA-ADM2",
+                   crs = 4326) %>%
+      select(shapeName)
+    ```
+
+    Checking duplicate area name
+
+`duplicated` can retrieve which elements of a vector or data frame are duplicate. The code chunk below can be used to determine the duplicate elements.
+
+```{r}
+
+nga <- (nga[order(nga$shapeName), ])
+nga<- nga %>%
+mutate(shapeName = tolower(shapeName))
+duplicate_Name <- nga$shapeName[ nga$shapeName %in% nga$shapeName[duplicated(nga$shapeName)] ]
+
+duplicate_Name
+```
+
+There are 12 duplicate elements. The below chunk assigns the right shape names corresponding to index values
+
+```{r}
+
+nga$shapeName[c(94,95,304,305,355,356,518,519,546,547,693,694)] <- c("Bassa (Kogi)","Bassa (Plateau)",
+                                                                               "Ifelodun (Kwara)","Ifelodun (Osun)",
+                                                                               "Irepodun (Kwara)","Irepodun (Osun)",
+                                                                               "Nassarawa (Kano)","Nassarawa", 
+                                                                               "Obi (Benue)","Obi(Nasarawa)",
+                                                                               "Surulere (Lagos)","Surulere (Oyo)")
+
+length((nga$shapeName[ nga$shapeName %in% nga$shapeName[duplicated(nga$shapeName)] ]))
+```
+
+No duplicate values since the output is 0.
+
+#### **Combining geospatial and aspatial data**
+
+Transfer the attribute information in *nga* sf data frame into *wp_sf* data frame using [*st_join()*](https://www.rdocumentation.org/packages/sf/versions/0.5-5/topics/st_join)function.
+
+```{r}
+
+wp_sf <- st_join(wp_sf, nga)
+```
+
+#### **Renaming the column names**
+
+Rename some of the column names which begins with \# for ease of use by using rename() function
+
+```{r}
+wp_sfT <- wp_sf %>%
+  rename ("Country" = "#clean_country_name",
+          "clean_adm2" = "#clean_adm2",
+          "status" = "#status_clean",
+          "lat" = "#lat_deg",
+          "long" = "#lon_deg",
+          "water_tech" = "#water_tech_category") %>%
+  mutate(status = replace_na(status, "Unknown"), water_tech = replace_na(water_tech, "Unknown")) %>%
+  select (water_tech,clean_adm2,status,lat,long,usage_capacity, is_urban)
+```
+
+#### **Extracting Funtional, Non-Functional and Unknown water points**
+
+Extract water point records by using *#status_clean* column.
+
+```{r}
+functional <- wp_sfT %>%
+  filter(`status` %in%  c("Functional", "Functional but not in use" , "Functional but needs repair")) %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+
+nonfunctional <- wp_sfT %>%
+  filter(`status` %in%  c("Abandoned/Decommissioned", "Abandoned", "Non functional due to dry season", "Non-Functional", "Non-Functional due to dry season")) %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+
+unknown_wp <- wp_sfT %>%
+  filter(`status` %in%  c("Unknown")) %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+
+handpump_count <- wp_sfT %>%
+  filter(`water_tech` %in%  c("Hand Pump")) %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+
+usageL1k <- wp_sfT %>%
+  filter(`usage_capacity` < 1000) %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+
+usage1k <- wp_sfT %>%
+  filter(`usage_capacity` == 1000) %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+
+ruralWP <- wp_sfT %>%
+  filter(`is_urban` == "FALSE") %>%
+  select(`lat`, `long`, `water_tech`, `clean_adm2`, `status`, `usage_capacity`, `is_urban`)
+```
+
+```{r}
+st_crs(nga)
+```
+
+```{r}
+
+st_crs(wp_sfT)
+```
+
+Below code chunks create new columns of total water point count, functional/non-functional, unknown water points count, high/low usage water point count and water point count in non-urban region by using *st_intersects()* function.
+
+```{r}
+
+nga$WPCount <- lengths(st_intersects(nga, wp_sfT))
+
+nga$functional <- lengths(st_intersects(nga, functional))
+
+nga$nonfunctional <- lengths(st_intersects(nga, unknown_wp))
+
+nga$unknown_wp <- lengths(st_intersects(nga, nonfunctional))
+
+nga$handpump <- lengths(st_intersects(nga, handpump_count))
+
+nga$usage1k <- lengths(st_intersects(nga, usage1k))
+
+nga$usageL1k <- lengths(st_intersects(nga, usageL1k))
+
+nga$ruralWP <- lengths(st_intersects(nga, ruralWP))
+```
+
+Also the ratios of functional/non-functional, unknown water points, high/low usage water point and water point in non-urban region are been created.
+
+```{r}
+
+nga <- nga %>%
+  mutate(`pct_functional` = `functional`/`WPCount`) %>%
+  mutate(`pct_nonfunctional` = `nonfunctional`/`WPCount`) %>% 
+  mutate(`pct_handpump` = `handpump`/`WPCount`) %>%
+  mutate(`pct_usage1k` = `usage1k`/`WPCount`) %>%
+  mutate(`pct_usageL1k` = `usageL1k`/`WPCount`) %>%
+  mutate(`pct_ruralWP` = `ruralWP`/`WPCount`)
+```
+
+#### **Removing NA values**
+
+```{r}
+
+nga <- nga[-c(3, 86, 241, 250, 252, 261, 400, 406, 447, 473, 492, 507, 526),]
+```
+
+#### **Replacing NA values**
+
+```{r}
+
+nga$`pct_functional`[is.na(nga$`pct_functional`)] <- 0
+nga$`pct_nonfunctional`[is.na(nga$`pct_nonfunctional`)] <- 0
+nga$`pct_handpump`[is.na(nga$`pct_handpump`)] <- 0
+nga$`pct_usage1k`[is.na(nga$`pct_usage1k`)] <- 0
+nga$`pct_usageL1k`[is.na(nga$`pct_usageL1k`)] <- 0
+nga$`pct_ruralWP`[is.na(nga$`pct_ruralWP`)] <- 0
+```
+
+Transform the coordinates from 4326 to 26391 projection using the *st_transform()* function.
+
+```{r}
+
+nga_sf <- st_transform(nga, crs = 26391)
+st_crs(nga_sf)
+```
+
+**Exploratory Data Analysis**
+
+**Bar-chart**
+
+In the code chunk below, *freq()* of **funModeling** package is used to display the distribution of `status`, `water_tech`, `is_urbal` fields in `wp_sfT`.
+
+```{r}
+
+freq(data=wp_sfT, 
+     input = 'status')
+```
+
+Nigeria consists of almost 48% of functional, 30% of non-functional and 11% of unknown waterpoints.
+
+```{r}
+
+freq(data=wp_sfT, 
+     input = 'water_tech')
+```
+
+Nigeria consists of about majority of 61% of hand pump, 26% of mechanized pump and 10% of unknown water technology.
+
+```{r}
+freq(data=wp_sfT, 
+     input = 'is_urban')
+```
+
+Nigeria consists of about majority of 79% of rural regions, 20% of urban regions.
+
+### **Histogram**
+
+**Histogram** is useful to identify the overall distribution of the data values (i.e. left skew, right skew or normal distribution)
+
+#### **The distribution of waterpoint proportion attributes**
+
+The code chunks below are used to create multiple histograms to reveal the overall distribution of the selected variables in *nga_wp_clus.*
+
+```{r}
+pct_functional <- ggplot(data=nga_sf, 
+             aes(x= `pct_functional`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+
+pct_nonfunctional <- ggplot(data=nga_sf, 
+             aes(x= `pct_nonfunctional`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+
+pct_handpump <- ggplot(data=nga_sf, 
+             aes(x= `pct_handpump`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+
+pct_usageCap1k <- ggplot(data=nga_sf, 
+             aes(x= `pct_usage1k`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+
+pct_usageCapLess1k <- ggplot(data=nga_sf, 
+             aes(x= `pct_usageL1k`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+
+pct_ruralWP <- ggplot(data=nga_sf, 
+             aes(x= `pct_ruralWP`)) +
+  geom_histogram(bins=20, 
+                 color="black", 
+                 fill="light blue")
+
+ggarrange(pct_functional, pct_nonfunctional, pct_handpump, pct_usageCap1k, pct_usageCapLess1k, pct_ruralWP, 
+          ncol = 3, 
+          nrow = 2)
+```
+
+### **EDA using choropleth map**
+
+```{r}
+tm_shape(nga_sf) +
+    tm_polygons(c("pct_functional", "pct_nonfunctional", "pct_handpump","pct_usage1k","pct_usageL1k", "pct_ruralWP"),
+                style="jenks") +
+    tm_facets(sync = TRUE, ncol = 2, nrow = 3) +
+  tm_legend(legend.position = c("right", "bottom"), legend.title.size = 1.5,legend.text.size = 1)+
+  tm_layout(outer.margins=0, asp=0)
+```
+
+# Correlation Analysis
+
+Before we perform cluster analysis, it it important for us to ensure that the cluster variables are not highly correlated.
+
+The code chunk below is used to visualise and analyse the correlation of the input variables.
+
+```{r}
+str(nga_sf)
+```
+
+```{r}
+nga_sf_var <- nga_sf %>%
+  st_drop_geometry() %>%
+  select("shapeName", "functional","nonfunctional", "pct_functional", "pct_nonfunctional", "pct_handpump","pct_usage1k","pct_usageL1k", "pct_ruralWP")
+cluster_vars.cor = cor(nga_sf_var[,2:8])
+corrplot.mixed(cluster_vars.cor,
+         lower = "ellipse", 
+               upper = "number",
+               tl.pos = "lt",
+               diag = "l",
+               tl.col = "blue")
+```
+
+**Hierarchy Cluster Analysis**
+
+The code chunk below will be used to extract the clustering variables from the *nga_sf* simple feature object into data.frame.
+
+```{r}
+cluster_vars <- nga_sf_var %>%
+  select("shapeName", "pct_functional", "pct_nonfunctional", "pct_handpump", "pct_usageL1k", "pct_ruralWP")
+head(cluster_vars,10)
+```
+
+```{r}
+cluster_vars.cor = cor(cluster_vars[,2:6])
+corrplot.mixed(cluster_vars.cor,
+         lower = "ellipse", 
+               upper = "number",
+               tl.pos = "lt",
+               diag = "l",
+               tl.col = "blue")
+```
+
+```{r}
+row.names(cluster_vars) <- cluster_vars$"shapeName"
+head(cluster_vars,10)
+```
+
+```{r}
+nga_cluster_var <- select(cluster_vars, c(2:6))
+head(nga_cluster_var, 10)
+```
+
+**Data Standardization** Standardization as it can handle outliers well and it is applicable to variables which are from normal distribution Z-score
+
+```{r}
+nga_cluster_var.std <- normalize(nga_cluster_var)
+summary(nga_cluster_var.std)
+```
+
+```{r}
+nga_cluster_var.z <- scale(nga_cluster_var)
+describe(nga_cluster_var.z)
+```
+
+## Visualising the standardised clustering variables
+
+Before performing clustering analysis, it is good to visualise the distribution of variables.
+
+```{r}
+r <- ggplot(data=nga_sf, 
+             aes(x= `pct_functional`)) +
+  geom_histogram(bins=20, 
+                 color="blue", 
+                 fill="#E69F00") +
+  ggtitle("Raw values without standardisation")
+
+nga_cluster_s_df <- as.data.frame(nga_cluster_var.std)
+s <- ggplot(data=nga_cluster_s_df, 
+       aes(x=`pct_functional`)) +
+  geom_histogram(bins=20, 
+                 color="blue", 
+                 fill="#E69F00") +
+  ggtitle("Min-Max Standardisation")
+
+nga_cluster_z_df <- as.data.frame(nga_cluster_var.z)
+z <- ggplot(data=nga_cluster_z_df, 
+       aes(x=`pct_functional`)) +
+  geom_histogram(bins=20, 
+                 color="blue", 
+                 fill="#E69F00") +
+  ggtitle("Z-score Standardisation")
+
+ggarrange(r, s, z,
+          ncol = 3,
+          nrow = 1)
+```
+
+**Computing Proximity Matrix**
+
+A proximity matrix is **a square matrix (two-dimensional array) containing the distances, taken pairwise between the elements of a matrix**. Broadly defined; a proximity matrix measures the similarity or dissimilarity between the pairs of matrix.
+
+```{r}
+proxmat <- dist(nga_cluster_var, method = 'euclidean')
+```
+
+## Computing hierarchical clustering
+
+*hclust()* can be used to perform hierarchical clustering. It supports eight clustering algorithms: ward.D, ward.D2, single, complete, average(UPGMA), mcquitty(WPGMA), median(WPGMC) and centroid(UPGMC).
+
+The code chunk below is used to compute hierarchical clustering and adopt *centroid* method.
+
+```{r}
+hclust_ward <- hclust(proxmat, method = 'ward.D')
+```
+
+### Selecting the optimal clustering algorithm by hierarchical clustering
+
+*agnes()* function of **cluster** package cane calculate the agglomerative coefficient, which measures the amount of clustering structure.
+
+```{r}
+m <- c( "average", "single", "complete", "ward")
+names(m) <- c( "average", "single", "complete", "ward")
+
+ac <- function(x) {
+  agnes(nga_cluster_var, method = x)$ac
+}
+
+map_dbl(m, ac)
+```
+
+### Determining Optimal Clusters
+
+There are three ways to determine the optimal clusters.
+
+-   Elbow method
+
+-   Average Silhouette Method
+
+-   Gap Statistic Method
+
+We are going to adopt *Gap Statistic Method* to determine the optimal clusters. The gap statistic compares the total within intra-cluster variation for different values of k with their expected values under null reference distribution of the data. The estimate of the optimal clusters will be value that maximize the gap statistic. This means that the clustering structure is far away from the random uniform distribution of points.
+
+```{r}
+set.seed(1234)
+gap_stat <- clusGap(nga_cluster_var, 
+                    FUN = hcut, 
+                    nstart = 25, 
+                    K.max = 10, 
+                    B = 50)
+# Print the result
+print(gap_stat, method = "firstmax")
+```
+
+Then, we can visualize the cluster plots.
+
+```{r}
+fviz_gap_stat(gap_stat)
+```
+
+### Interpreting the dendrogram
+
+```{r}
+plot(hclust_ward,cex=0.6)
+rect.hclust(hclust_ward, 
+            k = 4, 
+            border = 2:5)
+```
+
+### Visually-driven hierarchical clustering analysis
+
+We are going to build both interactive and static cluster heatmaps with the help of ***heatmaply()*** package.
+
+#### Transforming the data frame into a matrix
+
+The code chunk below is used to transform *lga_ict* data frame into a data matrix.
+
+```{r}
+nga_cluster_var_mat <- data.matrix(nga_cluster_var)
+```
+
+Plotting Interactive Cluster Heatmap
+
+```{r}
+heatmaply(normalize(nga_cluster_var_mat),
+          Colv=NA,
+          dist_method = "euclidean",
+          hclust_method = "ward.D",
+          seriate = "OLO",
+          colors = Reds,
+          k_row = 5,
+          margins = c(NA,200,60,NA),
+          fontsize_row = 4,
+          fontsize_col = 5,
+          main="Geographic Segmentation of Nigeria WP indicators",
+          xlab = "ICT Indicators",
+          ylab = "ShapeName"
+          )
+```
+
+### Mapping the clusters formed
+
+The code chunk below is used to derive a 5-cluster model based on hierarchical clustering.
+
+```{r}
+groups <- as.factor(cutree(hclust_ward, k=5))
+nga_sf_cluster <- cbind(nga_sf, as.matrix(groups)) %>%
+  rename(`CLUSTER`=`as.matrix.groups.`)
+qtm(nga_sf_cluster, "CLUSTER")
+```
+
+### Elbow Method
+
+The Elbow Method looks at the total WSS(within-cluster sum of Square) as a function of the number clusters.
+
+```{r}
+set.seed(1234)
+# function to compute total within-cluster sum of squares
+fviz_nbclust(nga_cluster_var, hcut, method = "wss", k.max = 10) + theme_minimal() + ggtitle("the Elbow Method")
+```
+
+### Plot K-means
+
+```{r}
+kmm <- kmeans(nga_cluster_var,4,nstart = 25)
+fviz_cluster(kmm, data = nga_cluster_var,
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+             )
+```
+
+### **Multivariate Visualisation**
+
+Past studies shown that parallel coordinate plot can be used to reveal clustering variables by cluster very effectively. In the code chunk below, [`ggparcoord()`](https://ggobi.github.io/ggally/reference/ggparcoord.html) of [**GGally**](https://ggobi.github.io/ggally/) package
+
+```{r}
+ggparcoord(data = nga_sf_cluster, 
+           columns = c(10:15),
+           groupColumn = "CLUSTER",
+           scale = "std",
+           alphaLines = 0.2,
+           boxplot = TRUE, 
+           title = "Multiple Parallel Coordinates Plots of Nigeria Variables by Cluster") +
+  facet_grid(~ CLUSTER) + 
+  theme(axis.text.x = element_text(angle = 30, size = 15)) +
+  scale_color_viridis(option = "C", discrete=TRUE)
+```
+
+In the code chunk below, `group_by()` and `summarise()` of dplyr are used to derive mean values of the clustering variables.
+
+```{r}
+nga_sf_cluster %>% 
+  st_set_geometry(NULL) %>%
+  group_by(CLUSTER) %>%
+  summarise(mean_pct_functional = mean(pct_functional),
+            mean_pct_nonfunctional = mean(pct_nonfunctional),
+            mean_pct_handpump = mean(pct_handpump),
+            mean_pct_usage1k = mean(pct_usage1k),
+            mean_pct_usageL1k = mean(pct_usageL1k),
+            mean_pct_ruralWP = mean(pct_ruralWP))
+```
+
+## Computing spatially constrained clusters using SKATER method
+
+The code chunk below is used to compute the spatially constrained clusters using *as_Spatial(*) of [poly2nd](https://r-spatial.github.io/spdep/reference/poly2nb.html)( ) packages.
+
+```{r}
+nga_sp <- as_Spatial(nga_sf)
+```
+
+```{r}
+nga.nb <- poly2nb(nga_sp, queen=TRUE)
+summary(nga.nb)
+```
+
+```{r}
+nga.nb <- poly2nb(nga_sp, queen=TRUE)
+summary(nga.nb)
+
+```
+
+### Computing minimum spanning tree
+
+The code chunk below is used to compute the cost of each edge.
+
+```{r}
+lcosts <- nbcosts(nga.nb, nga_cluster_var)
+```
+
+```{r}
+nga.w <- nb2listw(nga.nb, 
+                   lcosts, 
+                   style="B")
+summary(nga.w)
+```
+
+**mstree()** function of **spdep** packages can be used to compute minimum spanning tree.
+
+```{r}
+nga.mst <- mstree(nga.w)
+```
+
+We can have a look at the dimension of the MST.
+
+```{r}
+dim(nga.mst)
+```
+
+We can plot the MST to show the observation numbers of the nodes along with the LGA boundaries.
+
+```{r}
+plot(nga_sp, border=gray(.5))
+plot.mst(nga.mst, 
+         coordinates(nga_sp), 
+         col="blue", 
+         cex.lab=0.7, 
+         cex.circles=0.005, 
+         add=TRUE)
+```
+
+## Computing spatially constrained clusters using SKATER method
+
+The code chunk below is used to compute the spatially constrained clusters using ***skater()*** of **spdep** packages.
+
+```{r}
+clust4 <- spdep::skater(edges = nga.mst[,1:2], 
+                 data = nga_cluster_var, 
+                 method = "euclidean", 
+                 ncuts = 4)
+```
+
+```{r}
+str(clust4)
+```
+
+```{r}
+ccs4 <- clust4$groups
+ccs4
+```
+
+we can also plot the pruned tree that shows the five clusters on top of the admin 2 area.
+
+```{r}
+plot(nga_sp, border=gray(.5))
+plot(clust4, 
+     coordinates(nga_sp), 
+     cex.lab=.7,
+     groups.colors=c("blue","red","brown", "green", "pink"),
+     cex.circles=0.005, 
+     add=TRUE)
+```
+
+### Visualising the clusters in choropleth map
+
+The code chunk below is used to plot the clusters derived by SKATER method.
+
+```{r}
+groups_mat <- as.matrix(clust4$groups)
+nga_sf_spatialcluster <- cbind(nga_sf_cluster, as.factor(groups_mat)) %>%
+  rename(`SP_CLUSTER`=`as.factor.groups_mat.`)
+qtm(nga_sf_spatialcluster, "SP_CLUSTER")
+```
+
+In the code chunk below, `group_by()` and `summarise()` of dplyr are used to derive mean values of the clustering variables.
+
+```{r}
+nga_sf_spatialcluster %>% 
+  st_set_geometry(NULL) %>%
+  group_by(SP_CLUSTER) %>%
+  summarise(mean_pct_functional = mean(pct_functional),
+            mean_pct_nonfunctional = mean(pct_nonfunctional),
+            mean_pct_handpump = mean(pct_handpump),
+            mean_pct_usage1k = mean(pct_usage1k),
+            mean_pct_usageL1k = mean(pct_usageL1k),
+            mean_pct_ruralWP = mean(pct_ruralWP))
+```
+
+Place both the hierarchical clustering and spatially constrained hierarchical clustering maps next to each other.
+
+```{r}
+hclust.map <- qtm(nga_sf_cluster,
+                  "CLUSTER", title = "Hierarchical clustering") + 
+  tm_borders(alpha = 0.5) 
+
+shclust.map <- qtm(nga_sf_spatialcluster,
+                   "SP_CLUSTER", title = "spatially constrained clusters using SKATER method") + 
+  tm_borders(alpha = 0.5) 
+
+tmap_arrange(hclust.map, shclust.map,
+             asp=NA, ncol=2)
+```
+
+# Spatially Constrained Clustering: ClustGeo Method
+
+In this section, we are going to use **ClustGeo** package to perform non-spatially constrained hierarchical cluster analysis and spatially constrained cluster analysis.
+
+## Ward-like hierarchical clustering: ClustGeo
+
+To perform non-spatially constrained hierarchical cluster, we only need to provide the function a dissimilarity matrix as shown in the code chunk below.
+
+```{r}
+nongeo_cluster <- hclustgeo(proxmat)
+plot(nongeo_cluster, cex = 0.5)
+rect.hclust(nongeo_cluster, 
+            k = 5, 
+            border = 2:5)
+```
+
+### Mapping the clusters formed
+
+```{r}
+groups <- as.factor(cutree(nongeo_cluster, k=5))
+nga_sf_ngeo_cluster <- cbind(nga_sf, as.matrix(groups)) %>%
+  rename(`CLUSTER` = `as.matrix.groups.`)
+qtm(nga_sf_ngeo_cluster, "CLUSTER")
+```
+
+## Spatially Constrained Clustering
+
+A spatial distance matrix will be derived by using `st_distance()` of **sf** package before we perform spatially constrained hierarchical clustering.
+
+```{r}
+dist <- st_distance(nga_sf, nga_sf)
+distmat <- as.dist(dist)
+```
+
+```{r}
+cr <- choicealpha(proxmat, distmat, range.alpha = seq(0, 1, 0.1), K=5, graph = TRUE)
+```
+
+```{r}
+clustG <- hclustgeo(proxmat, distmat, alpha = 0.4)
+groups <- as.factor(cutree(clustG, k=5))
+nga_sf_Gcluster <- cbind(nga_sf, as.matrix(groups)) %>%
+  rename(`CLUSTER` = `as.matrix.groups.`)
+```
+
+```{r}
+qtm(nga_sf_Gcluster, "CLUSTER")
+```
+
+In the code chunk below, `group_by()` and `summarise()` of dplyr are used to derive mean values of the clustering variables.
+
+```{r}
+nga_sf_Gcluster %>% 
+  st_set_geometry(NULL) %>%
+  group_by(CLUSTER) %>%
+  summarise(mean_pct_functional = mean(pct_functional),
+            mean_pct_nonfunctional = mean(pct_nonfunctional),
+            mean_pct_handpump = mean(pct_handpump),
+            mean_pct_usage1k = mean(pct_usage1k),
+            mean_pct_usageL1k = mean(pct_usageL1k),
+            mean_pct_ruralWP = mean(pct_ruralWP))
+```
+
+```{r}
+ngeoclust.map <- qtm(nga_sf_ngeo_cluster,
+                  "CLUSTER", title = "Ward-like hierarchical clustering") + 
+  tm_borders(alpha = 0.5) 
+
+gcluster.map <- qtm(nga_sf_Gcluster,
+                   "CLUSTER", title = "Spatially Constrained Hierarchical Clustering") + 
+  tm_borders(alpha = 0.5) 
+
+tmap_arrange(ngeoclust.map, gcluster.map,
+             asp=NA, ncol=2)
+```
+
+# Visualisation on all clustering
+
+The code chunk below is used to plot the clusters result together.
+
+```{r}
+tmap_arrange(hclust.map, shclust.map, ngeoclust.map, gcluster.map, ncol = 2, asp = 1)
+```
+
+### 
+
+THE END.
