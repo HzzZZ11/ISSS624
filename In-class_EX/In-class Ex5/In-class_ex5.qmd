@@ -1,0 +1,371 @@
+---
+title: "In_class exercise 5"
+editor: visual
+---
+
+# Geograpgically Weighted Logistic Regression (GWLR) and Application
+
+## Overview
+
+In this lesson, you will learn the basic concepts and methods of logistic regression specially designed for geographical data. Upon completion of this lesson, you will able to:
+
+-   explain the similarities and differences between Logistic Regression (LR) algorithm versus geographical weighted Logistic Regression (GWLR) algorithm.
+
+-   calibrate predictive models by using appropriate Geographically Weighted Logistic Regression algorithm for geographical data.
+
+```{r}
+pacman::p_load(sf, tidyverse, funModeling, blorr, corrplot, ggpubr, spdep, GWmodel, tmap, skimr, caret)
+```
+
+### **Importing data**
+
+Importing water point data
+
+First, we are going to import 2 set of data
+
+```{r}
+wp <- readRDS("rds/osun_wp_sf.rds")
+```
+
+```{r}
+glimpse(wp)
+
+```
+
+```{r}
+osun <- readRDS("rds/Osun.rds")
+```
+
+```{r}
+glimpse(osun)
+```
+
+```{r}
+tm_shape(osun) +
+  tm_polygons()+
+tm_shape(wp)+
+  tm_dots()
+```
+
+## Exploratory Data Analysis
+
+```{r}
+freq(wp, input='status')
+```
+
+```{r}
+tmap_mode("view")
+```
+
+tmap mode set to interactive viewing
+
+```{r}
+tm_shape(osun) +
+  tm_polygons(alpha=0.4) +
+tm_shape(wp) +
+  tm_dots(col="status",
+          alpha=0.6) +
+  tm_view(set.zoom.limits = c(9, 12))
+```
+
+the skim() function of the skimr package to do quick exploratory data analysis. For categorical variables, it shows the number of the missing values and unique variable view. For binary variables, shows the number of missing values and gives a frequency count. For numercial fields, on top of missing values, it also shows some summary statistics like mean, standard deviation.
+
+```{r}
+skim(wp)
+```
+
+```{r}
+expvars <- c("status","distance_to_primary_road", "distance_to_secondary_road",
+             "distance_to_tertiary_road", "distance_to_city", 
+             "distance_to_town", "water_point_population",
+             "local_population_1km", "usage_capacity", "is_urban",
+             "water_source_clean")
+
+wp_clean <- wp %>%
+  filter(!if_any(expvars, ~is.na(.x)))%>%
+  mutate(usage_capacity = as.factor(usage_capacity))
+```
+
+Next, we need to check for multicollinearity. As we cannot o that on the data with geometry information, we need to strip the geometry information with `st_set_geometry(NULL)`. We can then plot the correlation matrix.
+
+```{r}
+wp_vars <- wp_clean %>%
+  select(expvars)%>%
+  st_set_geometry(NULL)
+```
+
+```{r}
+vars.cor = cor(wp_vars[2:7])
+corrplot.mixed(vars.cor,
+               lower="ellipse",
+               upper="number",
+               tl.pos = "lt",
+               diag="l",
+               tl.col = "black")
+```
+
+There are no variables that display multi-collinearity so we do not need to drop any. Now we can proceed to do a logistic regression. The first line of the code below creates the regression formula from the list of variables of interest using the `paste()` function. This method of creating a formula from lists is convenient when we have many explanatory variables so we don't need to keep typing it out. We can then input the formula into the `glm()` function to perform the regression.
+
+```{r}
+fm <- as.formula(paste("status ~", 
+                       paste(expvars[2:11], collapse="+")))
+
+model <- glm(fm, 
+             data=wp_clean, 
+             family=binomial(link="logit"))
+```
+
+The `blr_regress()` function of the blorr package creates a neat logistic regression report.
+
+```{r}
+blr_regress(model)
+```
+
+There are 2 variables which are not statistically significant (p-value\>0.05). They are not good predictors and should be considered. distance_to_tertiary_road, distance_to_city, distance_to_town and local_population_1km have positive coefficients, indicating that larger values correspond with higher possibility of a waterpoint being functional.
+
+```{r}
+blr_confusion_matrix(model, cutoff=0.5)
+```
+
+The overall accuracy of the model is 67%. The model is better at predicting positives than negatives as the true positive rate (sensitivity) is higher than the true negative rate (specificity).
+
+## Geographically Weighted Logistic Regression
+
+```{r}
+wp_clean_sp <- wp_clean %>%
+  select(expvars) %>%
+  as_Spatial()
+
+wp_clean_sp
+```
+
+The next step is to create the spatial weights matrix. We need to use a distance-based spatial weights matrix to conduct the logistic regression. The following code chunk uses AIC to recommend the maximum distance to consider neighbours for a fixed distance matrix.
+
+```{r}
+bw.fixed <- bw.ggwr(fm, 
+                    data=wp_clean_sp,
+                    family = "binomial",
+                    approach= "AIC",
+                    kernel = "gaussian",
+                    adaptive = FALSE,
+                    longlat= FALSE)
+```
+
+```{r}
+bw.fixed
+```
+
+The recommended maximum bandwidth for fixed distance matrix is 2599.672m.
+
+```{r}
+gwlr.fixed <- ggwr.basic(fm,
+                         data=wp_clean_sp,
+                         bw = 2599.672,
+                         family = "binomial",
+                         kernel = "gaussian",
+                         adaptive = FALSE,
+                         longlat= FALSE)
+```
+
+```{r}
+gwlr.fixed
+```
+
+In order to assess the performance of the GWLR, we need to extract the output into a dataframe.
+
+```{r}
+gwr.fixed <- as.data.frame(gwlr.fixed$SDF)
+```
+
+We manually compute the predicted waterpoint status from the probability that the waterpoint is functional (yhat) using the threshold of 0.5 again.
+
+```{r}
+gwr.fixed <- gwr.fixed %>%
+  mutate(most = ifelse(
+    yhat >= 0.5, T, F
+  ))
+```
+
+The following code chunk creates a confusion matrix by comparing the actual outcome with the predicted likely outcome.
+
+```{r}
+gwr.fixed$y <- as.factor(gwr.fixed$y)
+gwr.fixed$most <- as.factor(gwr.fixed$most)
+
+CM <- confusionMatrix(data=gwr.fixed$most, 
+                      positive= "TRUE",
+                      reference = gwr.fixed$y)
+CM
+```
+
+We can plot the predicted outcome spatially by extracting the sdf output from the model as an sf object.
+
+```{r}
+gwr.fixed.sf <- st_as_sf(gwlr.fixed$SDF)
+```
+
+```{r}
+estprob <- tm_shape(osun)+
+  tm_polygons(alpha=0.1)+
+  tm_text(text="ADM2_EN")+
+  tm_shape(gwr.fixed.sf) +
+  tm_dots(col="yhat",
+          border.col = "gray60",
+          border.lwd = 1, 
+          palette = "YlOrRd") +
+  tm_view(set.zoom.limits = c(9, 12))
+
+actual <- tm_shape(osun)+
+  tm_polygons(alpha=0.1)+
+  tm_text(text="ADM2_EN")+
+  tm_shape(gwr.fixed.sf) +
+  tm_dots(col="y",
+          border.col = "gray60",
+          border.lwd = 1,
+          palette = c("#FFFFB2", "#BD0026")) +
+  tm_view(set.zoom.limits = c(9, 12))
+
+tmap_arrange(actual, estprob,
+           asp=1, ncol=2,
+           sync = TRUE)
+```
+
+### Refining the Model
+
+We can further refine the model by removing the variables (distance_to_primary_road, distance_to_secondary_road ) that we previously identified as not statistically significant. To do that, we create a new formula without those variables. We then need to find the recommended fixed bandwidth for the formula.
+
+```{r}
+fm2 <- as.formula(paste("status ~", 
+                       paste(expvars[4:11], collapse="+")))
+
+bw.fixed <- bw.ggwr(fm2, 
+                    data=wp_clean_sp,
+                    family = "binomial",
+                    approach= "AIC",
+                    kernel = "gaussian",
+                    adaptive = FALSE,
+                    longlat= FALSE)
+```
+
+```{r}
+bw.fixed
+```
+
+```{r}
+gwlr2.fixed <- ggwr.basic(fm2,
+                         data=wp_clean_sp,
+                         bw = 2377.371,
+                         family = "binomial",
+                         kernel = "gaussian",
+                         adaptive = FALSE,
+                         longlat= FALSE)
+```
+
+```{r}
+gwlr2.fixed
+```
+
+We should also compare the confusion matrix of the new local model with the first local model.
+
+```{r}
+gwr2.fixed <- as.data.frame(gwlr2.fixed$SDF) %>%
+  mutate(most = as.factor(
+    ifelse(
+      yhat >= 0.5, T, F)),
+    y = as.factor(y)
+  )
+CM
+```
+
+```{r}
+CM2 <- confusionMatrix(data=gwr2.fixed$most, 
+                       positive = "TRUE",
+                      reference = gwr2.fixed$y)
+CM2
+```
+
+```{r}
+gwr2.fixed <- gwr2.fixed %>%
+  mutate(most2 = as.factor(
+    ifelse(
+      yhat >= 0.6, T, F))
+  )
+
+CM3 <- confusionMatrix(data=gwr2.fixed$most2, 
+                       positive = "TRUE",
+                      reference = gwr2.fixed$y)
+CM3
+```
+
+Now, let's plot the predicted results of the second model spatially.
+
+```{r}
+gwr2.fixed.sf <- st_as_sf(gwlr2.fixed$SDF) 
+```
+
+```{r}
+estprob <- tm_shape(osun)+
+  tm_polygons(alpha=0.1)+
+  tm_text(text="ADM2_EN")+
+  tm_shape(gwr2.fixed.sf) +
+  tm_dots(col="yhat",
+          border.col = "gray60",
+          border.lwd = 1, 
+          palette = "YlOrRd") +
+  tm_view(set.zoom.limits = c(9, 12))
+
+tmap_arrange(actual, estprob,
+           asp=1, ncol=2,
+           sync = TRUE)
+```
+
+We should also directly compare the prediction result with the actual. The code chunk below adds the prediction results based on the 0.6 threshold level. We also add indicators for false negatives and false positives to see if the misclassifications show spatial depedency.
+
+```{r}
+gwr2.fixed.sf <- gwr2.fixed.sf%>%
+  mutate(thres0.6 = as.factor(
+    ifelse(yhat >= 0.6, T, F)),
+    y = as.factor(y),
+    FP = ifelse(thres0.6==T & y==F, T, F),
+    FN = ifelse(thres0.6==F & y==T, T, F)
+  )
+
+
+```
+
+```{r}
+pred0.6 <- tm_shape(osun)+
+  tm_polygons(alpha=0.1)+
+  tm_text(text="ADM2_EN")+
+  tm_shape(gwr2.fixed.sf) +
+  tm_dots(col="thres0.6",
+          border.col = "gray60",
+          border.lwd = 1, 
+          palette = c("#FFFFB2", "#BD0026")) +
+  tm_view(set.zoom.limits = c(9, 12))
+
+FN <- tm_shape(osun)+
+  tm_polygons(alpha=0.1)+
+  tm_text(text="ADM2_EN")+
+  tm_shape(filter(gwr2.fixed.sf, FN==T)) +
+  tm_dots(col="FN",
+          border.col = "gray60",
+          border.lwd = 1,
+          palette = c("#FFFFFF", "#000000")) +
+  tm_view(set.zoom.limits = c(9, 12))
+
+FP <- tm_shape(osun)+
+  tm_polygons(alpha=0.1)+
+  tm_text(text="ADM2_EN")+
+  tm_shape(filter(gwr2.fixed.sf, FP==T)) +
+  tm_dots(col="FP",
+          border.col = "gray60",
+          border.lwd = 1,
+          palette = c("#FFFFFF", "#000000")) +
+  tm_view(set.zoom.limits = c(9, 12))
+
+
+tmap_arrange(actual, pred0.6, FP, FN,
+           asp=1, ncol=2,
+           sync = TRUE)
+```
